@@ -17,6 +17,7 @@ const restExecutors: { [key: TId]: RestExecutor } = {};
 /**
  *
  * @param request REST request which will be sent to the executor
+ * @param variables variables group (collection variables, environment, globals)
  * @param firecampAgent firecamp agent use to execute API according to it
  * @returns rest request's response
  */
@@ -37,12 +38,18 @@ export const send = async (
       //@ts-ignore
       return await window.__electron__.http.send(request, variables);
     case EFirecampAgent.Extension:
-    case EFirecampAgent.Web:
-      restExecutors[request.__ref.id] = new RestExecutor();
-      //@ts-ignore
-      res = restExecutors[request.__ref.id].send(request, variables);
-      delete restExecutors[requestId];
+    case EFirecampAgent.Web: {
+      // Track the executor so it can be cancelled externally
+      restExecutors[requestId] = new RestExecutor();
+      try {
+        //@ts-ignore
+        res = await restExecutors[requestId].send(request, variables);
+      } finally {
+        // Always remove the tracked executor when done (success or failure)
+        delete restExecutors[requestId];
+      }
       return res;
+    }
     case EFirecampAgent.Cloud:
       if (request.body?.type == ERestBodyTypes.FormData) {
         const body = await parseBody(request.body);
@@ -85,8 +92,10 @@ export const cancel = async (
     // case EFirecampAgent.Extension:
     //   return extension.cancel(requestId);
     case EFirecampAgent.Web:
-      restExecutors[requestId].cancel();
-      delete restExecutors[requestId];
+      if (restExecutors[requestId]) {
+        restExecutors[requestId].cancel();
+        delete restExecutors[requestId];
+      }
       return;
     case EFirecampAgent.Cloud:
       const response = await axios.get(
@@ -94,6 +103,23 @@ export const cancel = async (
       );
 
       return response.data;
+  }
+};
+
+/**
+ * Cancel all active executors and clear internal state.
+ * Should be called on process exit or cleanup to prevent
+ * process leaks from lingering executors.
+ */
+export const cancelAll = (): void => {
+  const ids = Object.keys(restExecutors);
+  for (const id of ids) {
+    try {
+      restExecutors[id].cancel();
+    } catch {
+      // best-effort cleanup — swallow errors
+    }
+    delete restExecutors[id];
   }
 };
 

@@ -8,6 +8,7 @@ export enum ERunnerEvents {
     Folder = 'folder',
     BeforeIteration = 'beforeIteration',
     Iteration = 'iteration',
+    Error = 'error',
     Done = 'done'
 }
 
